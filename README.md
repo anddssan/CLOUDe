@@ -85,9 +85,9 @@ CLOUDe can predict classes ("Redundant" or "Unique") and evolutionary parameters
 
 To predict classes, the following commands can be used depending on the chosen method:
 
-    CLOUDeClassifyNN(training_prefix, testing_prefix, num_layers)	# neural network
-    CLOUDeClassifySVM(training_prefix, testing_prefix)			   	# support vector machine
-    CLOUDeClassifyRF(training_prefix, testing_prefix)				# random forest
+    CLOUDeClassifyNN(training_prefix, testing_prefix, num_layers)   # neural network
+    CLOUDeClassifySVM(training_prefix, testing_prefix)              # support vector machine
+    CLOUDeClassifyRF(training_prefix, testing_prefix)               # random forest
   
 where training_prefix and testing_prefix are the prefixes to training and testing feature files that were outputted by the GenerateTrainingData() function, and num_layers is the number of layers (0, 1, 2, 3, 4 or 5) of the neural network.
   
@@ -105,9 +105,9 @@ and
 
 To predict evolutionary parameters, the following commands can be used depending on the chosen algorithm:
 
-    CLOUDePredictNN(training_prefix, testing_prefix, num_layers)	# neural network
-    CLOUDePredictSVM(training_prefix, testing_prefix)			    # support vector machine
-    CLOUDePredictRF(training_prefix, testing_prefix)				# random forest
+    CLOUDePredictNN(training_prefix, testing_prefix, num_layers)    # neural network
+    CLOUDePredictSVM(training_prefix, testing_prefix)               # support vector machine
+    CLOUDePredictRF(training_prefix, testing_prefix)                # random forest
   
 where training_prefix and testing_prefix are the prefixes to training and testing feature files that were outputted by the GenerateTrainingData() function, and num_layers is the number of layers (0, 1, 2, 3, 4 or 5) of the neural network.
   
