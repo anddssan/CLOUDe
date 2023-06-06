@@ -17,14 +17,16 @@ If you find any issues running CLOUDe, then please contact Andre Luiz Campelo do
 ---------------	
 Getting started
 ---------------
-Before you are able to use the CLOUDe R package, you will need to have the dplyr, mvtnorm, tensorflow, keras, liquidSVM, and ranger libraries installed in your R environment. These libraries can be installed with the following commands in R:
+Before you are able to use the CLOUDe R package, you will need to have the dplyr, mvtnorm, tensorflow, keras, ranger, devtools, and liquidSVM libraries installed in your R environment. These libraries can be installed with the following commands in R:
 
     install.packages("dplyr")
     install.packages("mvtnorm")
     install.packages("tensorflow")
     install.packages("keras")
-    install.packages("liquidSVM")
     install.packages("ranger")
+    install.packages("devtools")
+    library(devtools)
+    install_version("liquidSVM", "1.2.0")
   
 The CLOUDe package comes with the script CLOUDe.r and an ExampleFiles directory containing example files to help you get started.
   
