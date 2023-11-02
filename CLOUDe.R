@@ -1,6 +1,6 @@
 library(dplyr)
 
-GenerateTrainingData <- function(m, Nk, training_prefix, logThetaMin, logThetaMax, logAlphaMin, logAlphaMax, logSigmaSqMin, logSigmaSqMax) {
+GenerateTrainingData <- function(m, Nk, training_prefix, logThetaMin, logThetaMax, logAlphaMin, logAlphaMax, logSigmaSqMin, logSigmaSqMax, empiricalFile) {
   library(mvtnorm) # For multivariate Gaussian distribution 
   
   scenarios <- c("redundant", "unique")
@@ -9,63 +9,47 @@ GenerateTrainingData <- function(m, Nk, training_prefix, logThetaMin, logThetaMa
   # m conditions with 3 expression values and 4 parameters each, and class label
   training_data <- matrix(0, nrow = 2*Nk, ncol = 1 + 7*m)
   
+  empirical <- as.matrix(read.table(empiricalFile, header = TRUE))
+  max_exp <- max(empirical)
+  min_exp <- min(empirical)
+  
   for(sindex in 1:length(scenarios)) {
     scenario <- scenarios[sindex]
     
     for(i in 1:Nk) {
-      tDSL <- 1
-      tDS <- runif(1, 0, 1)
-      
-      alpha <- 10^runif(m, min = logAlphaMin, max = logAlphaMax)
-      sigmaSq <- 10^runif(m, min = logSigmaSqMin, max = logSigmaSqMax)
-      
-      theta1 <- c()
-      theta2 <- c()
-      
-      if(scenario == "redundant") { # REDUNDANT
-        theta1 <- runif(m, min = logThetaMin, max = logThetaMax)
-        theta2 <- theta1
-      }
-      else if(scenario == "unique") { # UNIQUE
-        theta1 <- runif(m, min = logThetaMin, max = logThetaMax)
-        theta2 <- runif(m, min = logThetaMin, max = logThetaMax)
-      }
-      
-      expression_vec <- c()
-      mu <- rep(0, 3)
-      CovMat <- matrix(0, nrow = 3, ncol = 3)
-      for(j in 1:m) {
-        mu[1] = (1 - exp(-alpha[j] * tDS)) * theta1[j] + exp(-alpha[j] * tDS) * theta2[j]
-        mu[2] = mu[1]
-        mu[3] = theta2[j]
-        CovMat[1, 1] = sigmaSq[j] / (2 * alpha[j])
-        CovMat[2, 2] = CovMat[1, 1]
-        CovMat[3, 3] = CovMat[1, 1]
-        CovMat[1, 2] = exp(-2 * alpha[j] * tDS) * sigmaSq[j] / (2 * alpha[j])
-        CovMat[2, 1] = CovMat[1, 2]
-        CovMat[1, 3] = exp(-2 * alpha[j] * tDSL) * sigmaSq[j] / (2 * alpha[j])
-        CovMat[3, 1] = CovMat[1, 3]
-        CovMat[2, 3] = CovMat[1, 3]
-        CovMat[3, 2] = CovMat[1, 3]
-        expression_vec <- c(expression_vec, rmvnorm(1, mean = mu, sigma = CovMat))
+      exp_vec <- c()
+      theta1s <- c()
+      theta2s <- c()
+      alphas <- c()
+      sigmasqs <- c()
+      for(k in 1:m) {  
+        list <- SimulateExpression(logThetaMin, logThetaMax, logAlphaMin, logAlphaMax, logSigmaSqMin, logSigmaSqMax, scenario)
+        while(min(list$expression_vec) < min_exp | max(list$expression_vec) > max_exp) {
+          list <- SimulateExpression(logThetaMin, logThetaMax, logAlphaMin, logAlphaMax, logSigmaSqMin, logSigmaSqMax, scenario)
+        }
+        exp_vec <- c(exp_vec, list$expression_vec)
+        theta1s <- c(theta1s, list$theta1)
+        theta2s <- c(theta2s, list$theta2)
+        alphas <- c(alphas, list$alpha)
+        sigmasqs <- c(exp_vec, list$sigmasq)
       }
       
       rowIndex <- (sindex - 1)*Nk + i # get the row of the training dataset
       training_data[rowIndex, 1] = sindex
       for(j in 1:(3*m)) {
-        training_data[rowIndex, 1 + j] = expression_vec[j]
+        training_data[rowIndex, 1 + j] = exp_vec[j]
       }
       for(j in 1:m) {
-        training_data[rowIndex, 1 + 3*m + j] = theta1[j]
+        training_data[rowIndex, 1 + 3*m + j] = theta1s[j]
       }
       for(j in 1:m) {
-        training_data[rowIndex, 1 + 4*m + j] = theta2[j]
+        training_data[rowIndex, 1 + 4*m + j] = theta2s[j]
       }
       for(j in 1:m) {
-        training_data[rowIndex, 1 + 5*m + j] = log10(alpha[j])
+        training_data[rowIndex, 1 + 5*m + j] = log10(alphas[j])
       }
       for(j in 1:m) {
-        training_data[rowIndex, 1 + 6*m + j] = log10(sigmaSq[j])
+        training_data[rowIndex, 1 + 6*m + j] = log10(sigmasqs[j])
       }
     }
   }
@@ -93,15 +77,64 @@ GenerateTrainingData <- function(m, Nk, training_prefix, logThetaMin, logThetaMa
   
   GenerateFeatures(m, training_prefix)
   GenerateClassifierResponse(training_prefix)
-  GeneratePredictorResponse(training_prefix)
+  GeneratePredictorResponse(training_prefix, m)
 }
 
-GenerateFeatures <- function(m, training_prefix) {
+SimulateExpression <- function(logThetaMin, logThetaMax, logAlphaMin, logAlphaMax, logSigmaSqMin, logSigmaSqMax, scenario) {
+  tDSL <- 1
+  tDS <- runif(1, 0, 1)
+  
+  alpha <- 10^runif(1, min = logAlphaMin, max = logAlphaMax)
+  sigmaSq <- 10^runif(1, min = logSigmaSqMin, max = logSigmaSqMax)
+  
+  theta1 <- c()
+  theta2 <- c()
+  
+  if(scenario == "redundant") { # REDUNDANT
+    theta1 <- runif(1, min = logThetaMin, max = logThetaMax)
+    theta2 <- theta1
+  }
+  else if(scenario == "unique") { # UNIQUE
+    theta1 <- runif(1, min = logThetaMin, max = logThetaMax)
+    theta2 <- runif(1, min = logThetaMin, max = logThetaMax)
+  }
+  
+  expression_vec <- c()
+  mu <- rep(0, 3)
+  CovMat <- matrix(0, nrow = 3, ncol = 3)
+  for(j in 1:1) {
+    mu[1] = (1 - exp(-alpha[j] * tDS)) * theta1[j] + exp(-alpha[j] * tDS) * theta2[j]
+    mu[2] = mu[1]
+    mu[3] = theta2[j]
+    CovMat[1, 1] = sigmaSq[j] / (2 * alpha[j])
+    CovMat[2, 2] = CovMat[1, 1]
+    CovMat[3, 3] = CovMat[1, 1]
+    CovMat[1, 2] = exp(-2 * alpha[j] * tDS) * sigmaSq[j] / (2 * alpha[j])
+    CovMat[2, 1] = CovMat[1, 2]
+    CovMat[1, 3] = exp(-2 * alpha[j] * tDSL) * sigmaSq[j] / (2 * alpha[j])
+    CovMat[3, 1] = CovMat[1, 3]
+    CovMat[2, 3] = CovMat[1, 3]
+    CovMat[3, 2] = CovMat[1, 3]
+    expression_vec <- c(expression_vec, rmvnorm(1, mean = mu, sigma = CovMat))
+  }
+  return(list("expression_vec" = expression_vec, "theta1" = theta1, "theta2" = theta2, 
+              "alpha" = alpha, "sigmasq" = sigmaSq))
+}
+
+GenerateFeatures <- function(m, training_prefix, logTransformExpression = FALSE) {
   input_filename <- paste(training_prefix, ".data", sep = "")
   feature_filename <- paste(training_prefix, ".features", sep = "")
   
   features <- as_tibble( as.matrix(read.table(input_filename, header = TRUE)) ) %>% 
     select(starts_with("eD"), starts_with("eS"), starts_with("eL"))
+  
+  if(logTransformExpression == TRUE) {
+    for(i in 1:nrow(features)) {
+      for(j in 1:ncol(features)) {
+        features[i,j] <- log10(features[i,j] + 1) # Transform data to log scale, accounting for expression of 0
+      }
+    }
+  }
   
   write.table(features, file = feature_filename, row.names = FALSE)
   
@@ -129,7 +162,7 @@ GenerateClassifierResponse <- function(training_prefix) {
   write.table(response, file = response_filename, row.names = FALSE)
 }
 
-GeneratePredictorResponse <- function(training_prefix) {
+GeneratePredictorResponse <- function(training_prefix, m) {
   input_filename <- paste(training_prefix, ".data", sep = "")
   response_filename <- paste(training_prefix, ".responses", sep = "")
   
@@ -137,23 +170,23 @@ GeneratePredictorResponse <- function(training_prefix) {
     select(starts_with("theta1"), starts_with("theta2"), starts_with("LogAlpha"), starts_with("LogSigma")) %>%
     as.matrix()
   
-  response <- matrix(0, nrow = nrow(preliminar_data), ncol = 18)
+  response <- matrix(0, nrow = nrow(preliminar_data), ncol = 3*m)
   column_labels <- c()
-  for(i in 1:6) {
+  for(i in 1:m) {
     column_labels <- c(column_labels, paste("Theta1.", i, sep = ""))
   }
-  for(i in 1:6) {
+  for(i in 1:m) {
     column_labels <- c(column_labels, paste("Theta2.", i, sep = ""))
   }
-  for(i in 1:6) {
-    column_labels <- c(column_labels, paste("SDR", i, sep = "")) # Selection-Drift ratio
+  for(i in 1:m) {
+    column_labels <- c(column_labels, paste("SV", i, sep = "")) # Stationary variance
   }
   colnames(response) <- column_labels
   
-  for(i in 1:6){
+  for(i in 1:m){
     response[,i] <- preliminar_data[,i]
-    response[,i+6] <- preliminar_data[,i+6]
-    response[,i+12] <- preliminar_data[,i+12] - preliminar_data[,i+18]
+    response[,i+m] <- preliminar_data[,i+m]
+    response[,i+2*m] <- preliminar_data[,i+3*m] - log10(2) - preliminar_data[,i+2*m]
   }
   
   write.table(response, file = response_filename, row.names = FALSE)
@@ -215,95 +248,95 @@ ClassifierCVnn <- function(num_layers, batchsize, num_epochs, log_lambda_min, lo
           if(num_layers == 0) {
             model %>%
               layer_dense(units = 2,
-                          activation = 'softmax',
+                          activation = "softmax",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j]),
                           input_shape = c(ncol(Xtrain)))
           }
           else if(num_layers == 1) {
             model %>%
               layer_dense(units = 256, 
-                          activation = 'relu',
+                          activation = "relu",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j]),
                           input_shape = c(ncol(Xtrain))) %>%
               layer_dense(units = 2,
-                          activation = 'softmax',
+                          activation = "softmax",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j]))
           }
           else if(num_layers == 2) {
             model %>%
               layer_dense(units = 256, 
-                          activation = 'relu',
+                          activation = "relu",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j]),
                           input_shape = c(ncol(Xtrain))) %>%
               layer_dense(units = 128, 
-                          activation = 'relu',
+                          activation = "relu",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j])) %>%
               layer_dense(units = 2,
-                          activation = 'softmax',
+                          activation = "softmax",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j]))
           }
           else if(num_layers == 3) {
             model %>%
               layer_dense(units = 256, 
-                          activation = 'relu',
+                          activation = "relu",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j]),
                           input_shape = c(ncol(Xtrain))) %>%
               layer_dense(units = 128, 
-                          activation = 'relu',
+                          activation = "relu",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j])) %>%
               layer_dense(units = 64, 
-                          activation = 'relu',
+                          activation = "relu",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j])) %>%
               layer_dense(units = 2,
-                          activation = 'softmax',
+                          activation = "softmax",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j]))
           }
           else if(num_layers == 4) {
             model %>%
               layer_dense(units = 256, 
-                          activation = 'relu',
+                          activation = "relu",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j]),
                           input_shape = c(ncol(Xtrain))) %>%
               layer_dense(units = 128, 
-                          activation = 'relu',
+                          activation = "relu",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j])) %>%
               layer_dense(units = 64, 
-                          activation = 'relu',
+                          activation = "relu",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j])) %>%
               layer_dense(units = 32, 
-                          activation = 'relu',
+                          activation = "relu",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j])) %>%
               layer_dense(units = 2,
-                          activation = 'softmax',
+                          activation = "softmax",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j]))
           }
           else if(num_layers == 5) {
             model %>%
               layer_dense(units = 256, 
-                          activation = 'relu',
+                          activation = "relu",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j]),
                           input_shape = c(ncol(Xtrain))) %>%
               layer_dense(units = 128, 
-                          activation = 'relu',
+                          activation = "relu",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j])) %>%
               layer_dense(units = 64, 
-                          activation = 'relu',
+                          activation = "relu",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j])) %>%
               layer_dense(units = 32, 
-                          activation = 'relu',
+                          activation = "relu",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j])) %>%
               layer_dense(units = 16, 
-                          activation = 'relu',
+                          activation = "relu",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j])) %>%
               layer_dense(units = 2,
-                          activation = 'softmax',
+                          activation = "softmax",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j]))
           }
           
           model %>% 
-            compile(loss = 'categorical_crossentropy',
+            compile(loss = "categorical_crossentropy",
                     optimizer = optimizer_adam(),
-                    metrics = c('categorical_crossentropy'))
+                    metrics = c("categorical_crossentropy"))
           
           history <- model %>% 
             fit(Xtrain, Ytrain,
@@ -363,95 +396,95 @@ ClassifierFitNN <- function(num_layers, batchsize, num_epochs, training_prefix) 
   if(num_layers == 0) {
     model %>%
       layer_dense(units = 2,
-                  activation = 'softmax',
+                  activation = "softmax",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt),
                   input_shape = c(ncol(X)))
   }
   else if(num_layers == 1) {
     model %>%
       layer_dense(units = 256, 
-                  activation = 'relu',
+                  activation = "relu",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt),
                   input_shape = c(ncol(X))) %>%
       layer_dense(units = 2,
-                  activation = 'softmax',
+                  activation = "softmax",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt))
   }
   else if(num_layers == 2) {
     model %>%
       layer_dense(units = 256, 
-                  activation = 'relu',
+                  activation = "relu",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt),
                   input_shape = c(ncol(X))) %>%
       layer_dense(units = 128, 
-                  activation = 'relu',
+                  activation = "relu",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt)) %>%
       layer_dense(units = 2,
-                  activation = 'softmax',
+                  activation = "softmax",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt))
   }
   else if(num_layers == 3) {
     model %>%
       layer_dense(units = 256, 
-                  activation = 'relu',
+                  activation = "relu",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt),
                   input_shape = c(ncol(X))) %>%
       layer_dense(units = 128, 
-                  activation = 'relu',
+                  activation = "relu",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt)) %>%
       layer_dense(units = 64, 
-                  activation = 'relu',
+                  activation = "relu",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt)) %>%
       layer_dense(units = 2,
-                  activation = 'softmax',
+                  activation = "softmax",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt))
   }
   else if(num_layers == 4) {
     model %>%
       layer_dense(units = 256, 
-                  activation = 'relu',
+                  activation = "relu",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt),
                   input_shape = c(ncol(X))) %>%
       layer_dense(units = 128, 
-                  activation = 'relu',
+                  activation = "relu",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt)) %>%
       layer_dense(units = 64, 
-                  activation = 'relu',
+                  activation = "relu",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt)) %>%
       layer_dense(units = 32, 
-                  activation = 'relu',
+                  activation = "relu",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt)) %>%
       layer_dense(units = 2,
-                  activation = 'softmax',
+                  activation = "softmax",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt))
   }
   else if(num_layers == 5) {
     model %>%
       layer_dense(units = 256, 
-                  activation = 'relu',
+                  activation = "relu",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt),
                   input_shape = c(ncol(X))) %>%
       layer_dense(units = 128, 
-                  activation = 'relu',
+                  activation = "relu",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt)) %>%
       layer_dense(units = 64, 
-                  activation = 'relu',
+                  activation = "relu",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt)) %>%
       layer_dense(units = 32, 
-                  activation = 'relu',
+                  activation = "relu",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt)) %>%
       layer_dense(units = 16, 
-                  activation = 'relu',
+                  activation = "relu",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt)) %>%
       layer_dense(units = 2,
-                  activation = 'softmax',
+                  activation = "softmax",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt))
   }
   
   model %>% 
-    compile(loss = 'categorical_crossentropy',
+    compile(loss = "categorical_crossentropy",
             optimizer = optimizer_adam(),
-            metrics = c('categorical_crossentropy', 'accuracy'))
+            metrics = c("categorical_crossentropy", "accuracy"))
   
   history <- model %>% 
     fit(X, Y,
@@ -523,95 +556,95 @@ PredictorCVnn <- function(num_layers, batchsize, num_epochs, log_lambda_min, log
           if(num_layers == 0) {
             model %>%
               layer_dense(units = ncol(Ytrain),
-                          activation = 'linear',
+                          activation = "linear",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j]),
                           input_shape = c(ncol(Xtrain)))
           }
           else if(num_layers == 1) {
             model %>%
               layer_dense(units = 256, 
-                          activation = 'relu',
+                          activation = "relu",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j]),
                           input_shape = c(ncol(Xtrain))) %>%
               layer_dense(units = ncol(Ytrain),
-                          activation = 'linear',
+                          activation = "linear",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j]))
           }
           else if(num_layers == 2) {
             model %>%
               layer_dense(units = 256, 
-                          activation = 'relu',
+                          activation = "relu",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j]),
                           input_shape = c(ncol(Xtrain))) %>%
               layer_dense(units = 128, 
-                          activation = 'relu',
+                          activation = "relu",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j])) %>%
               layer_dense(units = ncol(Ytrain),
-                          activation = 'linear',
+                          activation = "linear",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j]))
           }
           else if(num_layers == 3) {
             model %>%
               layer_dense(units = 256, 
-                          activation = 'relu',
+                          activation = "relu",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j]),
                           input_shape = c(ncol(Xtrain))) %>%
               layer_dense(units = 128, 
-                          activation = 'relu',
+                          activation = "relu",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j])) %>%
               layer_dense(units = 64, 
-                          activation = 'relu',
+                          activation = "relu",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j])) %>%
               layer_dense(units = ncol(Ytrain),
-                          activation = 'linear',
+                          activation = "linear",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j]))
           }
           else if(num_layers == 4) {
             model %>%
               layer_dense(units = 256, 
-                          activation = 'relu',
+                          activation = "relu",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j]),
                           input_shape = c(ncol(Xtrain))) %>%
               layer_dense(units = 128, 
-                          activation = 'relu',
+                          activation = "relu",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j])) %>%
               layer_dense(units = 64, 
-                          activation = 'relu',
+                          activation = "relu",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j])) %>%
               layer_dense(units = 32, 
-                          activation = 'relu',
+                          activation = "relu",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j])) %>%
               layer_dense(units = ncol(Ytrain),
-                          activation = 'linear',
+                          activation = "linear",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j]))
           }
           else if(num_layers == 5) {
             model %>%
               layer_dense(units = 256, 
-                          activation = 'relu',
+                          activation = "relu",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j]),
                           input_shape = c(ncol(Xtrain))) %>%
               layer_dense(units = 128, 
-                          activation = 'relu',
+                          activation = "relu",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j])) %>%
               layer_dense(units = 64, 
-                          activation = 'relu',
+                          activation = "relu",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j])) %>%
               layer_dense(units = 32, 
-                          activation = 'relu',
+                          activation = "relu",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j])) %>%
               layer_dense(units = 16, 
-                          activation = 'relu',
+                          activation = "relu",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j])) %>%
               layer_dense(units = ncol(Ytrain),
-                          activation = 'linear',
+                          activation = "linear",
                           kernel_regularizer = regularizer_l1_l2(l1 = gammas[i] * lambdas[j], l2 = (1 - gammas[i]) * lambdas[j]))
           }
           
           model %>% 
-            compile(loss = 'mean_squared_error',
+            compile(loss = "mean_squared_error",
                     optimizer = optimizer_adam(),
-                    metrics = c('mean_squared_error'))
+                    metrics = c("mean_squared_error"))
           
           history <- model %>% 
             fit(Xtrain, Ytrain,
@@ -676,95 +709,95 @@ PredictorFitNN <- function(num_layers, batchsize, num_epochs, training_prefix) {
   if(num_layers == 0) {
     model %>%
       layer_dense(units = ncol(Y),
-                  activation = 'linear',
+                  activation = "linear",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt),
                   input_shape = c(ncol(X)))
   }
   else if(num_layers == 1) {
     model %>%
       layer_dense(units = 256, 
-                  activation = 'relu',
+                  activation = "relu",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt),
                   input_shape = c(ncol(X))) %>%
       layer_dense(units = ncol(Y),
-                  activation = 'linear',
+                  activation = "linear",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt))
   }
   else if(num_layers == 2) {
     model %>%
       layer_dense(units = 256, 
-                  activation = 'relu',
+                  activation = "relu",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt),
                   input_shape = c(ncol(X))) %>%
       layer_dense(units = 128, 
-                  activation = 'relu',
+                  activation = "relu",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt)) %>%
       layer_dense(units = ncol(Y),
-                  activation = 'linear',
+                  activation = "linear",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt))
   }
   else if(num_layers == 3) {
     model %>%
       layer_dense(units = 256, 
-                  activation = 'relu',
+                  activation = "relu",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt),
                   input_shape = c(ncol(X))) %>%
       layer_dense(units = 128, 
-                  activation = 'relu',
+                  activation = "relu",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt)) %>%
       layer_dense(units = 64, 
-                  activation = 'relu',
+                  activation = "relu",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt)) %>%
       layer_dense(units = ncol(Y),
-                  activation = 'linear',
+                  activation = "linear",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt))
   }
   else if(num_layers == 4) {
     model %>%
       layer_dense(units = 256, 
-                  activation = 'relu',
+                  activation = "relu",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt),
                   input_shape = c(ncol(X))) %>%
       layer_dense(units = 128, 
-                  activation = 'relu',
+                  activation = "relu",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt)) %>%
       layer_dense(units = 64, 
-                  activation = 'relu',
+                  activation = "relu",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt)) %>%
       layer_dense(units = 32, 
-                  activation = 'relu',
+                  activation = "relu",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt)) %>%
       layer_dense(units = ncol(Y),
-                  activation = 'linear',
+                  activation = "linear",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt))
   }
   else if(num_layers == 5) {
     model %>%
       layer_dense(units = 256, 
-                  activation = 'relu',
+                  activation = "relu",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt),
                   input_shape = c(ncol(X))) %>%
       layer_dense(units = 128, 
-                  activation = 'relu',
+                  activation = "relu",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt)) %>%
       layer_dense(units = 64, 
-                  activation = 'relu',
+                  activation = "relu",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt)) %>%
       layer_dense(units = 32, 
-                  activation = 'relu',
+                  activation = "relu",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt)) %>%
       layer_dense(units = 16, 
-                  activation = 'relu',
+                  activation = "relu",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt)) %>%
       layer_dense(units = ncol(Y),
-                  activation = 'linear',
+                  activation = "linear",
                   kernel_regularizer = regularizer_l1_l2(l1 = gamma_opt * lambda_opt, l2 = (1 - gamma_opt) * lambda_opt))
   }
   
   model %>% 
-    compile(loss = 'mean_squared_error',
+    compile(loss = "mean_squared_error",
             optimizer = optimizer_adam(),
-            metrics = 'mean_squared_error')
+            metrics = "mean_squared_error")
   
   history <- model %>% 
     fit(X, Y,
@@ -824,13 +857,13 @@ CLOUDeClassifySVM <- function(training_prefix, testing_prefix) {
   }
   rm(std_params)
   
-  svm_trained <- mcSVM(x = Xtrain, y = Ytrain$class, mc_type = "OvA_hinge", folds = 5, scale = FALSE, do.select = TRUE)
+  svm_trained <- mcSVM(x = Xtrain, y = Ytrain$class, mc_type = "OvA_hinge", folds = 5, scale = FALSE, do.select = TRUE, gammas = seq(0.001, 5, length = 11), lambdas = 10^(seq(-3, 3, length = 7)))  # C = 1/lambda
   preds <- c(predict(svm_trained, X))
   
   Yest <- data.frame("Class" = ifelse(preds <= 0.0, "redundant", "unique"))
   
   write.table(Yest, paste(testing_prefix, ".svm.classifications", sep = ""), row.names = FALSE)
-
+  
   pred_probs <- (preds + 1) / 2
   probs_est <- data.frame("redundant" = 1 - pred_probs, "unique" = pred_probs)
   
@@ -932,7 +965,7 @@ CLOUDePredictSVM <- function(training_prefix, testing_prefix) {
   
   Yest <- matrix(0, nrow = nrow(X), ncol = ncol(Ytrain))
   for(i in 1:ncol(Ytrain)) {
-    svm_trained <- lsSVM(x = Xtrain, y = Ytrain[,i], folds = 5, scale = FALSE, do.select = TRUE)
+    svm_trained <- lsSVM(x = Xtrain, y = Ytrain[,1], folds = 5, scale = FALSE, do.select = TRUE, gammas = seq(0.001, 5, length = 11), lambdas = 10^(seq(-3, 3, length = 7)))  # C = 1/lambda
     Yest[,i] <- c(predict(svm_trained, X))
   }
   
@@ -989,4 +1022,218 @@ CLOUDePredictRF <- function(training_prefix, testing_prefix) {
   rm(Ytrain)
   
   write.table(Yest, paste(testing_prefix, ".rf.predictions", sep = ""), row.names = FALSE)
+}
+
+ClassifierCVxgb <- function(max_depth, eta_min, eta_max, num_eta, log_lambda_min, log_lambda_max, num_lambda, gamma_min, gamma_max, num_gamma, training_prefix) {
+  library(xgboost)
+  
+  X <- as.matrix(read.table(paste(training_prefix, ".features", sep = ""), header = TRUE))
+  Y <- read.table(paste(training_prefix, ".classes", sep = ""), header = TRUE) %>%
+    transmute(class = as.factor(ifelse(redundant == 1, "redundant", "unique")))
+  
+  # standardize the input for CV assessment
+  X_means <- colMeans(X)
+  X_sds <- apply(X, 2, sd)
+  for(j in 1:ncol(X)) {
+    X[,j] = (X[,j] - X_means[j]) / X_sds[j]
+  }
+  
+  searchGrid <- expand.grid(eta = seq(eta_min, eta_max, length = num_eta),
+                            lambda = 10^seq(log_lambda_min, log_lambda_max, length = num_lambda),
+                            gamma = seq(gamma_min, gamma_max, length = num_gamma)
+  )
+  
+  lossHyperparameters <- apply(searchGrid, 1, function(parameterList){
+    
+    #Extract Parameters to test
+    currentEta <- parameterList[["eta"]]
+    currentLambda <- parameterList[["lambda"]]
+    currentGamma <- parameterList[["gamma"]]
+    
+    xgb.train <- xgb.DMatrix(data = X, label = as.numeric(Y$class)-1)
+    xgbCV <- xgb.cv(data = xgb.train, booster="gbtree", tree_method = "hist", 
+                    max_depth = max_depth, objective="multi:softprob", num_class = 2, 
+                    nfold = 5, nrounds = 500, early_stopping_rounds = 50, verbose = F,
+                    "eta" = currentEta, "lambda" = (currentLambda * (1 - currentGamma)), 
+                    "alpha" = (currentLambda * currentGamma))
+    loss <- as.matrix(xgbCV$evaluation_log)[,'test_mlogloss_mean'][xgbCV$best_iteration]
+    best_iter <- xgbCV$best_iteration
+    
+    output <- return(c(loss, currentEta, currentLambda, currentGamma, best_iter,
+                       (currentLambda * (1 - currentGamma)), (currentLambda * currentGamma)))})
+  
+  output <- as.data.frame(t(lossHyperparameters))
+  varnames <- c("TestLoss", "ETA", "Lambda", "Gamma", "BestIteration", "L2", "L1")
+  names(output) <- varnames
+  
+  loss <- min(output$TestLoss)  
+  gamma <- output[which.min(output$TestLoss),]["Gamma"]
+  lambda <- output[which.min(output$TestLoss),]["Lambda"]
+  eta <- output[which.min(output$TestLoss),]["ETA"]
+  l2 <- output[which.min(output$TestLoss),]["L2"]  # lambda * (1 - gamma)
+  l1 <- output[which.min(output$TestLoss),]["L1"]  # lambda * gamma
+  best_iter <- output[which.min(output$TestLoss),]["BestIteration"]
+  
+  cv_results <- matrix(0, 1, 7)
+  cv_results[1] = loss
+  cv_results[2] = gamma
+  cv_results[3] = lambda
+  cv_results[4] = eta
+  cv_results[5] = l2
+  cv_results[6] = l1
+  cv_results[7] = best_iter
+  names(cv_results) <- c("Loss", "Gamma", "Lambda", "ETA", "L2", "L1", "BestIteration")
+  
+  write.table(cv_results, file = paste(training_prefix, ".xgb.", max_depth, ".classifier_cv", sep = ""), row.names = FALSE)
+}
+
+PredictorCVxgb <- function(max_depth, eta_min, eta_max, num_eta, log_lambda_min, log_lambda_max, num_lambda, gamma_min, gamma_max, num_gamma, training_prefix) {
+  library(xgboost)
+  
+  X <- as.matrix(read.table(paste(training_prefix, ".features", sep = ""), header = TRUE))
+  Y <- as.matrix(read.table(paste(training_prefix, ".responses", sep = ""), header = TRUE))
+  
+  # standardize the input for CV assessment
+  X_means <- colMeans(X)
+  X_sds <- apply(X, 2, sd)
+  Y_means <- colMeans(Y)
+  Y_sds <- apply(Y, 2, sd)
+  for(j in 1:ncol(X)) {
+    X[,j] = (X[,j] - X_means[j]) / X_sds[j]
+  }
+  for(j in 1:ncol(Y)) {
+    Y[,j] = (Y[,j] - Y_means[j]) / Y_sds[j]
+  }
+  
+  searchGrid <- expand.grid(eta = seq(eta_min, eta_max, length = num_eta),
+                            lambda = 10^seq(log_lambda_min, log_lambda_max, length = num_lambda),
+                            gamma = seq(gamma_min, gamma_max, length = num_gamma)
+  )
+  
+  rmseErrorsHyperparameters <- apply(searchGrid, 1, function(parameterList){
+      
+    #Extract Parameters to test
+    currentEta <- parameterList[["eta"]]
+    currentLambda <- parameterList[["lambda"]]
+    currentGamma <- parameterList[["gamma"]]
+    
+    rmse <- 0
+    for(i in 1:ncol(Y)) {
+      xgb.train <- xgb.DMatrix(data = X, label = Y[,i])
+      xgbCV <- xgb.cv(data = xgb.train, booster="gbtree", tree_method = "hist", 
+                      max_depth = max_depth, objective="reg:squarederror", nfold = 5, 
+                      nrounds = 500, early_stopping_rounds = 50, verbose = F,
+                      "eta" = currentEta, "lambda" = (currentLambda * (1 - currentGamma)), 
+                      "alpha" = (currentLambda * currentGamma))
+      rmse <- rmse + xgbCV$evaluation_log$test_rmse_mean[xgbCV$best_iteration]
+    }
+    
+    output <- return(c(rmse, currentEta, currentLambda, currentGamma, 
+                       (currentLambda * (1 - currentGamma)), (currentLambda * currentGamma)))})
+  
+  output <- as.data.frame(t(rmseErrorsHyperparameters))
+  varnames <- c("TestRMSE", "ETA", "Lambda", "Gamma", "L2", "L1")
+  names(output) <- varnames
+  
+  loss_mse <- (min(output$TestRMSE) / ncol(Y)) ^ 2  # Average RMSE to average MSE
+  gamma <- output[which.min(output$TestRMSE),]["Gamma"]
+  lambda <- output[which.min(output$TestRMSE),]["Lambda"]
+  eta <- output[which.min(output$TestRMSE),]["ETA"]
+  l2 <- output[which.min(output$TestRMSE),]["L2"]  # lambda * (1 - gamma)
+  l1 <- output[which.min(output$TestRMSE),]["L1"]  # lambda * gamma
+  
+  cv_results <- matrix(0, 1, 6)
+  cv_results[1] = loss_mse
+  cv_results[2] = gamma
+  cv_results[3] = lambda
+  cv_results[4] = eta
+  cv_results[5] = l2
+  cv_results[6] = l1
+  names(cv_results) <- c("Loss", "Gamma", "Lambda", "ETA", "L2", "L1")
+  
+  write.table(cv_results, file = paste(training_prefix, ".xgb.", max_depth, ".predictor_cv", sep = ""), row.names = FALSE)
+}
+
+CLOUDeClassifyXGB <- function(training_prefix, testing_prefix, max_depth) {
+  library(xgboost)
+  
+  Xtrain <- as.matrix(read.table(paste(training_prefix, ".features", sep = ""), header = TRUE))
+  Ytrain <- read.table(paste(training_prefix, ".classes", sep = ""), header = TRUE) %>%
+    transmute(class = as.factor(ifelse(redundant == 1, "redundant", "unique")))
+  X <- as.matrix(read.table(paste(testing_prefix, ".features", sep = ""), header = TRUE))
+  
+  # standardize the input for training and testing
+  std_params <- read.table(paste(training_prefix, ".X_stdparams", sep = ""), header = TRUE)
+  X_means <- c(std_params$Xmeans)
+  X_sds <- c(std_params$Xsds)
+  for(j in 1:ncol(X)) {
+    Xtrain[,j] = (Xtrain[,j] - X_means[j]) / X_sds[j]
+    X[,j] = (X[,j] - X_means[j]) / X_sds[j]
+  }
+  rm(std_params)
+  
+  cv_results <- read.table(paste(training_prefix, ".xgb.", max_depth, ".classifier_cv", sep = ""), header = TRUE)
+  
+  xgb.train <- xgb.DMatrix(data = Xtrain, label = as.numeric(Ytrain$class)-1)
+  xgb_trained <- xgb.train(data = xgb.train, booster="gbtree", tree_method = "hist", 
+                           max_depth = max_depth, objective="multi:softprob", num_class = 2,
+                           nrounds = cv_results$BestIteration, verbose = F, maximize = F,
+                           eta = cv_results$ETA, alpha = cv_results$L1, lambda = cv_results$L2)
+  
+  xgb_pred <- predict(xgb_trained, X, reshape = T)
+  xgb_pred <- as.data.frame(xgb_pred)
+  colnames(xgb_pred) <- c("redundant", "unique")
+  Yest <- data.frame("Class" = ifelse(xgb_pred$redundant > 0.5, "redundant", "unique"))
+  
+  write.table(Yest, paste(testing_prefix, ".xgb.", max_depth, ".classifications", sep = ""), row.names = FALSE)
+  write.table(xgb_pred, paste(testing_prefix, ".xgb.", max_depth, ".probabilities", sep = ""), row.names = FALSE)
+}
+
+CLOUDePredictXGB <- function(training_prefix, testing_prefix, max_depth) {
+  library(xgboost)
+  
+  Xtrain <- as.matrix(read.table(paste(training_prefix, ".features", sep = ""), header = TRUE))
+  Ytrain <- as.matrix(read.table(paste(training_prefix, ".responses", sep = ""), header = TRUE))
+  X <- as.matrix(read.table(paste(testing_prefix, ".features", sep = ""), header = TRUE))
+  
+  # standardize the input for training and testing
+  std_params <- read.table(paste(training_prefix, ".X_stdparams", sep = ""), header = TRUE)
+  X_means <- c(std_params$Xmeans)
+  X_sds <- c(std_params$Xsds)
+  for(j in 1:ncol(X)) {
+    Xtrain[,j] = (Xtrain[,j] - X_means[j]) / X_sds[j]
+    X[,j] = (X[,j] - X_means[j]) / X_sds[j]
+  }
+  rm(std_params)
+  
+  std_params <- read.table(paste(training_prefix, ".Y_stdparams", sep = ""), header = TRUE)
+  Y_means <- c(std_params$Ymeans)
+  Y_sds <- c(std_params$Ysds)
+  for(j in 1:ncol(Ytrain)) {
+    Ytrain[,j] = (Ytrain[,j] - Y_means[j]) / Y_sds[j]
+  }
+  rm(std_params)
+  
+  cv_results <- read.table(paste(training_prefix, ".xgb.", max_depth, ".predictor_cv", sep = ""), header = TRUE)
+  
+  Yest_std <- matrix(0, nrow = nrow(X), ncol = ncol(Ytrain))
+  for(i in 1:ncol(Ytrain)) {
+    xgb.train <- xgb.DMatrix(data = Xtrain, label = Ytrain[,i])
+    xgb_trained <- xgb.train(data = xgb.train, booster="gbtree", tree_method = "hist", 
+                             max_depth = max_depth, objective="reg:squarederror", nrounds = 500, 
+                             verbose = F, eta = cv_results$ETA, alpha = cv_results$L1, 
+                             lambda = cv_results$L2)
+    xgb_pred <- predict(xgb_trained, X, reshape = T)
+    Yest_std[,i] <- as.matrix(xgb_pred)
+  }
+  Yest <- Yest_std
+  
+  # un-standardize the responses
+  for(j in 1:ncol(Yest)) {
+    Yest[, j] = Yest_std[,j] * Y_sds[j] + Y_means[j]
+  }
+  
+  colnames(Yest) <- colnames(Ytrain)
+  
+  write.table(Yest, paste(testing_prefix, ".xgb.", max_depth, ".predictions", sep = ""), row.names = FALSE)
 }
