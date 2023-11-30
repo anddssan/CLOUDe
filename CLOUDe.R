@@ -31,7 +31,7 @@ GenerateTrainingData <- function(m, Nk, training_prefix, logThetaMin, logThetaMa
         theta1s <- c(theta1s, list$theta1)
         theta2s <- c(theta2s, list$theta2)
         alphas <- c(alphas, list$alpha)
-        sigmasqs <- c(exp_vec, list$sigmasq)
+        sigmasqs <- c(sigmasqs, list$sigmasq)
       }
       
       rowIndex <- (sindex - 1)*Nk + i # get the row of the training dataset
