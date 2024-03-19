@@ -7,7 +7,7 @@ Citing CLOUDe
 Thank you for using the CLOUDe classifier and predictor.
 
 If you use this R package, then please cite:
-    AL Campelo dos Santos, M DeGiorgio, R Assis. In Preparation
+    AL Campelo dos Santos, M DeGiorgio, R Assis. Predicting evolutionary targets and parameters of gene deletion from expression data. Bioinformatics Advances, Volume 4, Issue 1, 2024, vbae002, https://doi.org/10.1093/bioadv/vbae002.
 
 ----------------
 Reporting issues
